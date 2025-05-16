@@ -1,0 +1,57 @@
+services:
+  collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel/config.yaml
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    environment:
+      - DD_API_KEY=${DD_API_KEY}
+    command: ["--config=/etc/otel/config.yaml"]
+
+
+  server:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - OTEL_SERVICE_NAME=server
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=server,deployment.environment=nettytest,version=1.0.0
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_PROPAGATORS=tracecontext,baggage
+      - OTEL_EXPORTER_OTLP_TIMEOUT=30s
+    depends_on:
+      - collector
+    entrypoint: >
+      sh -c "until nc -z collector 4317; do
+      echo 'Waiting for collector...';
+      sleep 2;
+      done;
+      exec java -cp app.jar nettyotel.NettyServer"
+
+  client:
+    build: .
+    command: >
+      sh -c "until nc -z collector 4317 && nc -z server 8080; do
+      echo 'Waiting for collector and server...';
+      sleep 2;
+      done;
+      exec java -cp app.jar nettyotel.NettyClient"
+    environment:
+      - OTEL_SERVICE_NAME=client
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=client,deployment.environment=nettytest,version=1.0.0
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_PROPAGATORS=tracecontext,baggage
+      - OTEL_EXPORTER_OTLP_TIMEOUT=30s
+    depends_on:
+      - server
+      - collector
